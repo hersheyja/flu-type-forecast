@@ -1,6 +1,7 @@
 # Flu Type Forecast
 
 CS 506 Final Project Proposal
+
 Name: Hershey Jamla
 
 ## Project Description
