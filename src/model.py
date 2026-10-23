@@ -1,4 +1,4 @@
-# trains the models and checks how often they guess the right winner
+# trains the model and checks how often they guess the right winner
 # leaves out one whole season at a time, trains on the rest, then guesses that season
 # so the model never sees the season its guessing
 
@@ -6,9 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
 out = Path("data/processed")
 viruses = ["H1N1", "H3N2", "B"]
@@ -21,13 +20,12 @@ features = ([f"prev_share_{v}" for v in viruses]
             + ["summer_log_total"])
 
 
-def top2(model, X):
-    # the model's 2 most likely flus for each row
-    probs = model.predict_proba(X)
+def top2(scores, classes):
+    # the model's 2 highest scoring flus for each row
     guesses = []
-    for p in probs:
-        best_two = np.argsort(p)[::-1][:2]
-        guesses.append([model.classes_[i] for i in best_two])
+    for s in scores:
+        best_two = np.argsort(s)[::-1][:2]
+        guesses.append([classes[i] for i in best_two])
     return guesses
 
 
@@ -36,10 +34,8 @@ def main():
     X = df[features].fillna(df[features].median())
     y = df["winner"]
 
-    results = {"Always the most common virus": [], "Same as last season": [],
-               "Logistic regression": [], "Random forest": []}
-    results_top2 = {"Always the most common virus": [], "Logistic regression": [],
-                    "Random forest": []}
+    results = {"Always the most common virus": [], "Same as last season": [], "Linear SVM": []}
+    results_top2 = {"Always the most common virus": [], "Linear SVM": []}
 
     for season in sorted(df["season"].unique()):
         # hold out this season, train on all the others
@@ -55,21 +51,13 @@ def main():
         # baseline 2: guess the same flu that won last season
         results["Same as last season"] += list(y_test == df.loc[test, "prev_winner"])
 
-        # logistic regression (scale the clues first so theyre all on the same scale)
+        # linear svm (scale the clues first so theyre all on the same scale)
         scaler = StandardScaler().fit(X_train)
-        logreg = LogisticRegression(C=0.5, max_iter=2000)
-        logreg.fit(scaler.transform(X_train), y_train)
-        results["Logistic regression"] += list(logreg.predict(scaler.transform(X_test)) == y_test)
-        guesses = top2(logreg, scaler.transform(X_test))
-        results_top2["Logistic regression"] += [w in g for w, g in zip(y_test, guesses)]
-
-        # random forest
-        forest = RandomForestClassifier(n_estimators=300, max_depth=4,
-                                        min_samples_leaf=5, random_state=0)
-        forest.fit(X_train, y_train)
-        results["Random forest"] += list(forest.predict(X_test) == y_test)
-        guesses = top2(forest, X_test)
-        results_top2["Random forest"] += [w in g for w, g in zip(y_test, guesses)]
+        svm = SVC(kernel="linear", C=0.1)
+        svm.fit(scaler.transform(X_train), y_train)
+        results["Linear SVM"] += list(svm.predict(scaler.transform(X_test)) == y_test)
+        guesses = top2(svm.decision_function(scaler.transform(X_test)), svm.classes_)
+        results_top2["Linear SVM"] += [w in g for w, g in zip(y_test, guesses)]
 
     # % right for each method
     table = pd.DataFrame({
