@@ -13,10 +13,6 @@ viruses = ["H1N1", "H3N2", "B"]
 season_start_week = 40
 season_end_week = 20
 
-# weird seasons: 2009 swine flu pandemic and 2020 covid (barely any flu)
-pandemic_season = 2009
-covid_season = 2020
-
 # need at least this many positive tests or the winner isnt reliable
 min_positives = 50
 
@@ -87,15 +83,8 @@ def build_region_season(weekly):
         totals[f"share_{v}"] = totals[v] / totals["total"]
     totals["winner"] = totals[viruses].idxmax(axis=1)
 
-    # how close the top 2 were
-    sorted_shares = totals[[f"share_{v}" for v in viruses]].apply(
-        lambda r: sorted(r, reverse=True), axis=1)
-    totals["margin"] = [s[0] - s[1] for s in sorted_shares]
-
     totals["season_label"] = totals["season"].astype(str) + "-" + (
         (totals["season"] + 1) % 100).astype(str).str.zfill(2)
-    totals["special"] = totals["season"].map(
-        {pandemic_season: "pandemic", covid_season: "covid"}).fillna("")
     return totals
 
 

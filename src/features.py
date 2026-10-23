@@ -74,7 +74,7 @@ def main():
     weekly = pd.read_csv(out / "weekly.csv")
     rs = pd.read_csv(out / "region_season.csv")
     feats = history_features(rs).merge(summer_features(weekly), on=["region", "season"], how="left")
-    data = rs[["region", "season", "season_label", "winner", "margin", "special"]].merge(
+    data = rs[["region", "season", "season_label", "winner"]].merge(
         feats, on=["region", "season"])
 
     # first season in each region has no "last season" so skip it
