@@ -1,5 +1,4 @@
-# cleans the CDC flu data and makes one row per region per season
-# with which flu won (H1N1, H3N2, or B)
+# cleans the cdc data -> one row per region per season + which flu won
 
 from pathlib import Path
 
@@ -13,7 +12,7 @@ viruses = ["H1N1", "H3N2", "B"]
 season_start_week = 40
 season_end_week = 20
 
-# need at least this many positive tests or the winner isnt reliable
+# under 50 positive tests the winner is basically random
 min_positives = 50
 
 
@@ -25,7 +24,7 @@ def load_csv(path):
 
 
 def season_of(year, week):
-    # label each season by the year it starts (oct 2015 - may 2016 = 2015)
+    # season = the year it starts, so oct 2015 - may 2016 is 2015
     return year if week >= season_start_week else year - 1
 
 
@@ -37,8 +36,8 @@ def load_weekly():
         for col in df.columns[4:]:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    # old and new files have different columns so match them up
-    # old H1 (before 2009) and 2009 H1N1 both count as H1N1
+    # old and new files dont have the same columns so match them up
+    # counting old H1 and 2009 H1N1 both as H1N1
     old_w = pd.DataFrame({
         "region": old["REGION"], "year": old["YEAR"], "week": old["WEEK"],
         "H1N1": old["A (2009 H1N1)"] + old["A (H1)"],
@@ -67,24 +66,27 @@ def build_region_season(weekly):
     flu = weekly[in_flu_season(weekly["week"])]
     totals = flu.groupby(["region", "season"])[viruses].sum().reset_index()
 
-    # skip seasons that arent over yet
-    finished = weekly[(weekly["year"] == weekly["season"] + 1)
-                      & (weekly["week"] >= season_end_week)]["season"].unique()
+    # skip seasons that arent done yet (need week 20 of the next year)
+    finished = []
+    for season in totals["season"].unique():
+        end_weeks = weekly[(weekly["year"] == season + 1) & (weekly["week"] >= season_end_week)]
+        if len(end_weeks) > 0:
+            finished.append(season)
     totals = totals[totals["season"].isin(finished)]
 
     totals["total"] = totals[viruses].sum(axis=1)
 
-    # drop region-seasons with too few tests
-    # (region 10 had no data before 2008, and 2020 had almost no flu)
+    # drop anything under 50 tests
+    # this gets rid of region 10 before 2008 and 2020 (covid)
     totals = totals[totals["total"] >= min_positives].copy()
 
-    # winner = the flu with the most positive tests
+    # winner = flu with the most positive tests
     for v in viruses:
         totals[f"share_{v}"] = totals[v] / totals["total"]
     totals["winner"] = totals[viruses].idxmax(axis=1)
 
-    totals["season_label"] = totals["season"].astype(str) + "-" + (
-        (totals["season"] + 1) % 100).astype(str).str.zfill(2)
+    # ex: 2015-16
+    totals["season_label"] = [f"{s}-{str(s + 1)[2:]}" for s in totals["season"]]
     return totals
 
 
@@ -95,9 +97,7 @@ def main():
     rs = build_region_season(weekly)
     rs.to_csv(out / "region_season.csv", index=False)
     print(f"weekly rows: {len(weekly)}")
-    print(f"region-seasons: {len(rs)} "
-          f"({rs['season'].nunique()} seasons x {rs['region'].nunique()} regions)")
-    print(f"seasons: {rs['season_label'].iloc[0]} to {rs['season_label'].iloc[-1]}")
+    print("region-seasons:", len(rs))
 
 
 if __name__ == "__main__":

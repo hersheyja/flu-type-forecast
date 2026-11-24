@@ -1,5 +1,5 @@
-# makes the clues (features) the model uses to guess each season's winner
-# only uses stuff we would know by oct 1, before the season starts
+# makes the features for the model
+# only stuff we'd know by oct 1 so the model isnt seeing the future
 
 from pathlib import Path
 
@@ -9,23 +9,23 @@ import pandas as pd
 out = Path("data/processed")
 viruses = ["H1N1", "H3N2", "B"]
 
-# summer = late may to september, the gap between flu seasons
+# summer = late may - sept (between seasons)
 summer_weeks = (21, 39)
 
-# cap "seasons since it last won" at 10 so really old stuff doesnt matter
+# cap seasons since at 10, anything older doesnt really matter
 max_seasons_since = 10
 
 
 def summer_features(weekly):
-    # how much of each flu showed up over the summer right before the season
+    # how much of each flu showed up the summer before
     s = weekly[(weekly["week"] >= summer_weeks[0]) & (weekly["week"] <= summer_weeks[1])]
     s = s.groupby(["region", "year"])[viruses].sum().reset_index()
 
-    # summer 2015 comes right before the 2015-16 season
+    # summer 2015 goes with the 2015-16 season
     s = s.rename(columns={"year": "season"})
     s["summer_total"] = s[viruses].sum(axis=1)
 
-    # +1 so a summer with 0 tests doesnt divide by 0
+    # +1 so we dont divide by 0 when a summer has no tests
     for v in viruses:
         s[f"summer_share_{v}"] = (s[v] + 1) / (s["summer_total"] + 3)
     s["summer_log_total"] = np.log1p(s["summer_total"])
@@ -33,11 +33,13 @@ def summer_features(weekly):
 
 
 def history_features(rs):
-    # what happened last season (in the region and the whole US)
-    # and how many seasons since each flu last won
+    # last season (region + whole US) and seasons since each flu won
     rows = []
+    # % of each flu in the whole US each season
     national = rs.groupby("season")[viruses].sum()
-    national = national.div(national.sum(axis=1), axis=0)
+    national_total = national.sum(axis=1)
+    for v in viruses:
+        national[v] = national[v] / national_total
 
     for region, grp in rs.groupby("region"):
         grp = grp.sort_values("season")
@@ -60,8 +62,10 @@ def history_features(rs):
 
             # seasons since each flu last won here
             for v in viruses:
-                since = max_seasons_since if last_won[v] is None else min(
-                    r["season"] - last_won[v], max_seasons_since)
+                if last_won[v] is None:
+                    since = max_seasons_since
+                else:
+                    since = min(r["season"] - last_won[v], max_seasons_since)
                 feat[f"seasons_since_{v}"] = since
 
             rows.append(feat)
@@ -77,10 +81,10 @@ def main():
     data = rs[["region", "season", "season_label", "winner"]].merge(
         feats, on=["region", "season"])
 
-    # first season in each region has no "last season" so skip it
+    # first season in each region has no last season so drop it
     data = data.dropna(subset=["prev_winner"]).reset_index(drop=True)
     data.to_csv(out / "features.csv", index=False)
-    print(f"feature rows: {len(data)}, columns: {data.shape[1]}")
+    print("feature rows:", len(data))
 
 
 if __name__ == "__main__":
