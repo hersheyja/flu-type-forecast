@@ -29,6 +29,63 @@ def top2(scores, classes):
     return guesses
 
 
+# predicting the full season winner at different dates
+# number = how many weeks into the season (oct 1 = 0, nov 1 = 4, dec 1 = 8 ...)
+prediction_dates = {"Oct 1": None, "Nov 1": 4, "Dec 1": 8, "Jan 1": 13, "Feb 1": 17}
+
+
+def early_season(weekly, weeks_in):
+    # how much of each flu showed up in the first few weeks of the season
+    w = weekly.copy()
+    w["weeks_in"] = np.where(w["week"] >= 40, w["week"] - 40, w["week"] + 12)
+    in_season = (w["week"] >= 40) | (w["week"] <= 20)
+    w = w[in_season & (w["weeks_in"] <= weeks_in)]
+
+    early = w.groupby(["region", "season"])[viruses].sum().reset_index()
+    total = early[viruses].sum(axis=1)
+    for v in viruses:
+        early[f"early_share_{v}"] = (early[v] + 1) / (total + 3)
+    early["early_log_total"] = np.log1p(total)
+
+    # simple guess to compare to: whatever is winning so far
+    early["leader"] = early[viruses].idxmax(axis=1)
+    return early.drop(columns=viruses)
+
+
+def try_dates(df):
+    # same balanced svm, but also using the early season weeks if we wait to guess
+    weekly = pd.read_csv(out / "weekly.csv")
+    rows = []
+    for date, weeks_in in prediction_dates.items():
+        if weeks_in is None:
+            data = df.copy()
+            feats = features
+        else:
+            data = df.merge(early_season(weekly, weeks_in), on=["region", "season"], how="left")
+            feats = features + [f"early_share_{v}" for v in viruses] + ["early_log_total"]
+
+        X = data[feats].fillna(data[feats].median())
+        y = data["winner"]
+        right = []
+        for season in sorted(data["season"].unique()):
+            test = data["season"] == season
+            scaler = StandardScaler().fit(X[~test])
+            svm = SVC(kernel="linear", C=0.1, class_weight="balanced")
+            svm.fit(scaler.transform(X[~test]), y[~test])
+            right += list(svm.predict(scaler.transform(X[test])) == y[test])
+
+        if weeks_in is None:
+            leader_accuracy = np.nan  # no season data yet on oct 1
+        else:
+            leader_accuracy = (data["leader"] == y).mean()
+        rows.append({"date": date, "svm_balanced": np.mean(right), "leader_so_far": leader_accuracy})
+
+    table = pd.DataFrame(rows)
+    table.to_csv(out / "date_results.csv", index=False)
+    print("accuracy by prediction date:")
+    print(table.round(3))
+
+
 def try_svm_c(df, X, y):
     # testing different C values for the svm
     # small C = simpler line, big C = tries to fit every training point
@@ -54,14 +111,15 @@ def main():
     y = df["winner"]
 
     results = {"Always the most common virus": [], "Same as last season": [],
-               "Linear SVM": [], "Logistic regression": []}
+               "Linear SVM": [], "Logistic regression": [], "Linear SVM (balanced)": []}
     results_top2 = {"Always the most common virus": [], "Linear SVM": [],
-                    "Logistic regression": []}
+                    "Logistic regression": [], "Linear SVM (balanced)": []}
 
     # save guesses for the confusion matrix
     preds = df[["region", "season", "winner"]].copy()
     preds["svm_pred"] = ""
     preds["logreg_pred"] = ""
+    preds["svm_bal_pred"] = ""
 
     for season in sorted(df["season"].unique()):
         # hold out this season, train on all the others
@@ -100,6 +158,16 @@ def main():
         guesses = top2(logreg.predict_proba(X_test_s), logreg.classes_)
         results_top2["Logistic regression"] += [w in g for w, g in zip(y_test, guesses)]
 
+        # balanced svm: mistakes on rare flus (like B) count more
+        # so it doesnt just guess H3N2 all the time (same idea as worksheet 9)
+        svm_bal = SVC(kernel="linear", C=0.1, class_weight="balanced")
+        svm_bal.fit(X_train_s, y_train)
+        svm_bal_guess = svm_bal.predict(X_test_s)
+        preds.loc[test, "svm_bal_pred"] = svm_bal_guess
+        results["Linear SVM (balanced)"] += list(svm_bal_guess == y_test)
+        guesses = top2(svm_bal.decision_function(X_test_s), svm_bal.classes_)
+        results_top2["Linear SVM (balanced)"] += [w in g for w, g in zip(y_test, guesses)]
+
     preds.to_csv(out / "predictions.csv", index=False)
 
     # accuracy for each method
@@ -116,7 +184,16 @@ def main():
     table.to_csv(out / "results.csv", index=False)
     print(table.round(3))
 
+    # % right for each flu, svm before vs after balancing
+    print("% right for each flu:")
+    for v in viruses:
+        rows_v = preds[preds["winner"] == v]
+        before = (rows_v["svm_pred"] == v).mean()
+        after = (rows_v["svm_bal_pred"] == v).mean()
+        print(f"  {v}: svm {before:.0%}, balanced svm {after:.0%}")
+
     try_svm_c(df, X, y)
+    try_dates(df)
 
 
 if __name__ == "__main__":

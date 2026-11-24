@@ -1,4 +1,4 @@
-# makes the charts: winner grid, results bar chart, confusion matrix
+# makes the charts: winner grid, results bar chart, confusion matrices, accuracy by date
 
 from pathlib import Path
 
@@ -78,32 +78,70 @@ def results_chart():
 def confusion_chart():
     preds = pd.read_csv(out / "predictions.csv")
 
-    # rows = actual, columns = svm guess
-    counts = pd.crosstab(preds["winner"], preds["svm_pred"])
-    counts = counts.loc[viruses, viruses]  # same order as other charts
+    # before and after balancing, side by side
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+    for ax, col, title in [(axes[0], "svm_pred", "Linear SVM"),
+                           (axes[1], "svm_bal_pred", "Linear SVM (balanced)")]:
+        # rows = actual, columns = svm guess
+        counts = pd.crosstab(preds["winner"], preds[col])
+        counts = counts.loc[viruses, viruses]  # same order as other charts
+        ax.imshow(counts, cmap="Blues", vmin=0, vmax=110)
 
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
-    ax.imshow(counts, cmap="Blues")
+        # count in each square
+        for i in range(3):
+            for j in range(3):
+                n = counts.iloc[i, j]
+                # white text on dark squares
+                if n > 50:
+                    ax.text(j, i, n, ha="center", va="center", color="white")
+                else:
+                    ax.text(j, i, n, ha="center", va="center", color="black")
 
-    # count in each square
-    for i in range(3):
-        for j in range(3):
-            n = counts.iloc[i, j]
-            # white text on dark squares
-            if n > 50:
-                ax.text(j, i, n, ha="center", va="center", color="white")
-            else:
-                ax.text(j, i, n, ha="center", va="center", color="black")
+        ax.set_xticks(range(3))
+        ax.set_xticklabels(viruses)
+        ax.set_yticks(range(3))
+        ax.set_yticklabels(viruses)
+        ax.set_xlabel("What the model guessed")
+        ax.set_ylabel("What actually won")
+        ax.set_title(title)
 
-    ax.set_xticks(range(3))
-    ax.set_xticklabels(viruses)
-    ax.set_yticks(range(3))
-    ax.set_yticklabels(viruses)
-    ax.set_xlabel("What the SVM guessed")
-    ax.set_ylabel("What actually won")
-    ax.set_title("Linear SVM: right guesses are on the diagonal")
+    fig.suptitle("Right guesses are on the diagonal")
     fig.tight_layout()
     fig.savefig(fig_dir / "confusion_matrix.png", dpi=200)
+
+
+def date_chart():
+    res = pd.read_csv(out / "date_results.csv")
+    x = range(len(res))
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(x, res["svm_balanced"], marker="o", color="steelblue", label="Linear SVM (balanced)")
+    ax.plot(x, res["leader_so_far"], marker="o", color="darkorange", linestyle="--",
+            label="Guess whatever is winning so far")
+    ax.axhline(1 / 3, color="gray", linestyle=":", label="Random guess (33%)")
+
+    # % on each point, higher one gets its label on top so they dont overlap
+    for i, r in res.iterrows():
+        svm, leader = r["svm_balanced"], r["leader_so_far"]
+        if np.isnan(leader) or svm >= leader:
+            ax.text(i, svm + 0.025, f"{svm:.0%}", ha="center", color="steelblue")
+            if not np.isnan(leader):
+                ax.text(i, leader - 0.05, f"{leader:.0%}", ha="center", color="darkorange")
+        else:
+            ax.text(i, leader + 0.025, f"{leader:.0%}", ha="center", color="darkorange")
+            ax.text(i, svm - 0.05, f"{svm:.0%}", ha="center", color="steelblue")
+
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(res["date"])
+    ax.set_ylim(0.25, 1.0)
+    ax.set_yticks([0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    ax.set_yticklabels(["30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"])
+    ax.set_xlabel("Date the prediction is made")
+    ax.set_ylabel("% of region-seasons right")
+    ax.set_title("Predicting the full-season winner: the later you guess, the easier it gets")
+    ax.legend(loc="upper left")
+    fig.tight_layout()
+    fig.savefig(fig_dir / "accuracy_by_date.png", dpi=200)
 
 
 def main():
@@ -111,6 +149,7 @@ def main():
     winner_chart()
     results_chart()
     confusion_chart()
+    date_chart()
     print("saved charts to figures/")
 
 
